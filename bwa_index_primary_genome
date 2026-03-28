@@ -3,10 +3,10 @@
 # Script to index the primary scaffolded reference genome LPJR3B2_primary_scaffolds_final.fa using bwa index
 
 #SBATCH --job-name=index_primary_ref
-#SBATCH --partition=medium
-#SBATCH --time=12:00:00
+#SBATCH --partition=long
+#SBATCH --time=24:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --output=index.out
 #SBATCH --error=index.err
 
@@ -22,9 +22,10 @@ export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 conda activate popoolation2
 set -u
 
-bwa index --version
+# print version (bwa index doesnt respond to --version)
+bwa 2>&1 | head -n 3 || true
 
-START_TIME=$(date + "%Y-%m-%d %H:%M:%S")
+START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
 echo "Script started at: $START_TIME"
 
 bwa index LPJR3B2_primary_scaffolds_final.fa # command to index the reference genome. 
@@ -34,5 +35,5 @@ bwa index LPJR3B2_primary_scaffolds_final.fa # command to index the reference ge
 
 echo "index complete"
 
-END_TIME=$(date + "%Y-%m-%d %H:%M:%S")
+END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
 echo "Script ended at: $END_TIME"
