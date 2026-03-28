@@ -1,0 +1,4 @@
+#!/bin/bash
+
+# script to split FASTQ into chunks for later alignment to the references genome using an array. 
+
