@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Script to index the primary scaffolded reference genome LPJR3B2_primary_scaffolds_final.fa using bwa index
+
+#SBATCH --job-name=index_primary_ref
+#SBATCH --partition=medium
+#SBATCH --time=12:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --output=index.out
+#SBATCH --error=index.err
+
+# Exit job if anything fails
+set -euo pipefail
+
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+conda activate popoolation2
+
+bwa index --version
+
+START_TIME=$(date + "%Y-%m-%d %H:%M:%S")
+echo "Script started at: $START_TIME"
+
+bwa index LPJR3B2_primary_scaffolds_final.fa # command to index the reference genome. 
+
+# this function prepares a reference genome is FASTA format for fast alignment by creating an FM-index that includes several files.
+# this later allows for rapid mapping of short sequencing reads to the reference. 
+
+echo "index complete"
+
+END_TIME=$(date + "%Y-%m-%d %H:%M:%S")
+echo "Script ended at: $END_TIME"
