@@ -11,10 +11,16 @@
 #SBATCH --error=index.err
 
 # Exit job if anything fails
-set -euo pipefail
+set -eo pipefail
 
 source /private/groups/kaylab/aschjeld/setup_conda.sh
+
+set +u
+export JAVA_LD_LIBRARY_PATH="${JAVA_LD_LIBRARY_PATH:-}"
+export PERL5LIB="${PERL5LIB:-}"
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 conda activate popoolation2
+set -u
 
 bwa index --version
 
