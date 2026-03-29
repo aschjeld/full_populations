@@ -1,0 +1,17 @@
+#!/bin/bash
+
+#SBATCH --partition=long
+#SBATCH --time=48:00:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=8G
+#SBATCH --job-name=align_to_ref
+#SBATCH --output=align_to.out
+#SBATCH --error=align_to.err
+#SBATCH --arrary=0 ***
+
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+conda activate popoolation2
+
+bwa mem version
+
+bwa mem
