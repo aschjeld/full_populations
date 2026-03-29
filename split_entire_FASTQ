@@ -2,3 +2,27 @@
 
 # script to split FASTQ into chunks for later alignment to the references genome using an array. 
 
+#SBATCH --job-name=split_big_fastq
+#SBATCH --partition=medium
+#SBATCH --time=06:00:00
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=32G
+#SBATCH --output=split.out
+#SBATCH --error=split.err
+
+
+# load conda and seqkit module for splitting FASTQ file
+# splitting by whole reads, using split2 command
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+
+set +u
+conda activate /private/groups/kaylab/aschjeld/conda_envs/seqkit_env
+set -u
+seqkit version
+
+# split2 splits the one compressed FASTQ file into smaller FASTQ files, each containing 1,000,000 reads. 
+# -s 1000000 is the command to split by the provided number of sequences
+# for single end fastq, one read is one sequence. Each chunk will contain 1M reads and since FASTQ uses 4 lines per read, there will be 4M lines per chunk
+# -O tells it to put all output files in the specified directory
+
+seqkit split2 -s 1000000 pop3p.fastq.gz -O 3p_fastq_split/
