@@ -1,0 +1,34 @@
+#!/bin/bash
+# script to ensure that the full fastq file and split fastq files have the same number of lines, i.e., the integrity of the files is maintained. 
+#SBATCH --partition=medium
+#SBATCH --time=06:00:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=8G
+#SBATCH --job-name=check_split
+#SBATCH --output=check_split_%j.out
+#SBATCH --error=check_split_%j.err
+
+# cancel job if any variables are undefined
+set -euo pipefail
+
+# using zcat to count number of lines in original fastq file
+echo "Original line count:"
+orig_lines=$(zcat pop3p.fastq.gz | wc -l)
+echo "$orig_lines"
+
+# using zcat to count number of lines throughout the split fastq files
+echo "Split line count:"
+split_lines=$(zcat 3p_fastq_split/*.fastq.gz | wc -l)
+echo "$split_lines"
+
+# print number of original lines
+echo "Original reads:"
+echo $((orig_lines / 4))
+
+# print number of split lines
+echo "Split reads:"
+echo $((split_lines / 4))
+
+echo "Checking gzip integrity of split files..."
+gzip -t 3p_fastq_split/*.fastq.gz
+echo "All split gzip files passed."
