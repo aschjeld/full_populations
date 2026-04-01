@@ -1,0 +1,82 @@
+#!/bin/bash 
+
+#SBATCH --partition=medium
+#SBATCH --time=24:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --job-name=merge_mpile
+#SBATCH --output=merge_mpile.out
+#SBATCH --error=merge_mpile.err
+
+set -euo pipefail
+
+START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+echo "Script started at: $START_TIME"
+
+# Load environment
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+
+# Temporarily allows undefined variables as errors then turns strict mode back on 
+set +u
+conda activate popoolation2
+set -u
+
+# Set directories for the popoolation2 source code, working directories for population 3P and 3W, and the primary reference genome
+POPDIR="/private/groups/kaylab/popoolation2/populations/popoolation2_1201"
+
+P3DIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/pop3p_bam_output"
+W3DIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/pop3w_bam_output"
+
+REF="/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final.fa"
+
+# Name the bam file directories
+shopt -s nullglob
+P3_BAMS=("$P3DIR"/*.sorted.bam)
+W3_BAMS=("$W3DIR"/*.sorted.bam)
+shopt -u nullglob
+
+# Specify output directory and ensure the directory exists. 
+OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/mpileup_sync"
+mkdir -p "$OUTDIR" logs
+cd "$OUTDIR"
+
+# Output names
+P3_MERGED="3p.merged.bam"
+W3_MERGED="3w.merged.bam"
+MPILEUP_OUT="3p_3w.mpileup"
+
+
+# Merge BAM chunks using samtools merge. 
+# This function ...
+# Specify threads with -8, 
+echo "Merging pink BAM chunks..."
+samtools merge -@ 8 -f "$P3_MERGED" "${P3_BAMS[@]}"
+
+echo "Merging white BAM chunks..."
+samtools merge -@ 8 -f "$W3_MERGED" "${W3_BAMS[@]}"
+
+# Index merged BAMs using samtools index.
+# This function ... 
+echo "Indexing merged BAMs..."
+samtools index -@ 8 "$P3_MERGED"
+samtools index -@ 8 "$W3_MERGED"
+
+# Create mpileup
+# this.. 
+echo "Running samtools mpileup..."
+samtools mpileup \
+    -B \
+    -Q 0 \
+    -f "$REF" \
+    "$P3_MERGED" "$W3_MERGED" \
+    > "$MPILEUP_OUT"
+
+echo "Done!"
+echo "Output files:"
+echo "  $OUTDIR/$P3_MERGED"
+echo "  $OUTDIR/$W3_MERGED"
+echo "  $OUTDIR/$MPILEUP_OUT"
+
+END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+echo "Script finished at: $END_TIME"
+  
