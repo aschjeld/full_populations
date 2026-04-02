@@ -1,0 +1,53 @@
+
+#!/bin/bash
+#SBATCH --job-name=fst
+#SBATCH --partition=long
+#SBATCH --time=24:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --array=0-2619%20
+#SBATCH --output=fst.out
+#SBATCH --error=fst.err
+
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+conda activate popoolation2
+
+export PATH="$HOME/perl5/bin:$PATH"
+export PERL5LIB="$HOME/perl5/lib/perl5:${PERL5LIB:-}"
+
+export LC_ALL=C
+export LANG=C
+
+set -euo pipefail
+set -x
+
+CHUNKDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/sync_by_scaffold"
+OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/fst"
+SCRIPT="/private/groups/kaylab/popoolation2/populations/popoolation2_1201/fst-sliding.pl"
+
+mkdir -p "$OUTDIR" logs
+
+cd "$CHUNKDIR"
+
+mapfile -t FILES < <(find . -maxdepth 1 -type f -name "scaffold*" | sort)
+
+if [[ "$SLURM_ARRAY_TASK_ID" -ge "${#FILES[@]}" ]]; then
+  echo "No file for SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID"
+  exit 1
+fi
+
+FILE="${FILES[$SLURM_ARRAY_TASK_ID]}"
+BASENAME="$(basename "$FILE" .sync)"
+
+echo "Running on file: $FILE"
+
+perl "$SCRIPT" \
+  --input "$FILE" \
+  --output "$OUTDIR/${BASENAME}.fst" \
+  --min-count 2 \
+  --min-coverage 4 \
+  --max-coverage 200 \
+  --min-covered-fraction 0.5 \
+  --window-size 1 \
+  --step-size 1 \
+  --pool-size 50:50
