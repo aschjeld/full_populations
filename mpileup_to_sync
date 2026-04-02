@@ -1,0 +1,52 @@
+#!/bin/bash 
+
+#SBATCH --partition=long
+#SBATCH --time=48:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --job-name=mpile_to_sync
+#SBATCH --output=mmpile_to_sync.out
+#SBATCH --error=mpile_to_sync.err
+
+set -euo pipefail
+
+START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+echo "Script started at: $START_TIME"
+
+# Load environment
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+
+
+# Temporarily allows undefined variables as errors then turns strict mode back on 
+set +u
+conda activate popoolation2
+set -u
+
+# Set directories 
+POPDIR="/private/groups/kaylab/popoolation2/populations/popoolation2_1201"
+
+MPILEUP_OUT="3p_3w.mpileup"
+SYNC_OUT="3p_3w.sync"
+
+
+pwd
+ls -lh $POPDIR
+which java
+java -version
+
+# Convert mpileup -> sync
+# this... 
+echo "Converting mpileup to sync..."
+java -ea -Xmx7g -jar "$POPDIR/mpileup2sync.jar" \
+    --input "$MPILEUP_OUT" \
+    --output "$SYNC_OUT" \
+    --fastq-type sanger \
+    --min-qual 20 \
+    --threads 8
+
+echo "Done!"
+
+END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+echo "Script finished at: $END_TIME"
+
+* for some annoying reason, this script DOES complete but it exits like it was cancelled. Double check sync file integrity though, just in case. 
