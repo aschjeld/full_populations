@@ -1,0 +1,35 @@
+#!/bin/bash
+
+# Bash script to create a genome offset file of the primary reference genome. 
+# This reference genome data is not yet organized on chromosomes, it is instead on many separate scaffolds. 
+# Each scaffold has its own coordinate system. 
+# A genome offset table tells us where each scaffold starts if we lay all scaffolds end-to-end in one long fake genome. 
+# This is useful because every SNP or window can be put on the same continuoius axis for plotting. 
+
+# Without this information we wouldn't know where a SNP at 100kb on scaffold 2 is relative to everything else. 
+# Versus with this file, we can say the SNP is at X specific location along the whole genomic axis. 
+
+# SLURM job specifications
+#SBATCH --job-name=genome_offset
+#SBATCH --partition=long
+#SBATCH --time=24:00:00
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=32G
+#SBATCH --output=offset.out
+#SBATCH --error=offset.err
+
+START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+echo "Script started at: $START_TIME"
+
+# Build the genome offset table with the following commands:
+# cum (short for cumulative) = running total of where the scaffold starts
+# OFFSET = current cum
+# END = cum + length
+# update cum 
+
+awk 'BEGIN{FS=OFS="\t"; print "CHR","LEN","OFFSET","END"; cum=0}
+     {print $1,$2,cum,cum+$2; cum+=$2}' \
+  LPJR3B2_primary_scaffolds_final.fa.fai > LP_primary_genome_offsets.tsv
+
+END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+echo "Script ended at: $END_TIME"
