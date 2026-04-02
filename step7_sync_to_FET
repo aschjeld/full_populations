@@ -1,0 +1,66 @@
+#!/bin/bash
+#SBATCH --job-name=FET
+#SBATCH --partition=long
+#SBATCH --time=24:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --array=0-2619%20
+#SBATCH --output=FET.out
+#SBATCH --error=FET.err
+
+set -euo pipefail
+set -x
+
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+
+# avoid unbound-variable issues during conda activation
+set +u
+conda activate popoolation2
+set -u
+
+export PATH="$HOME/perl5/bin:$PATH"
+export PERL5LIB="$HOME/perl5/lib/perl5:${PERL5LIB:-}"
+
+export LC_ALL=C
+export LANG=C
+
+CHUNKDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/sync_by_scaffold"
+OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/FET"
+SCRIPT="/private/groups/kaylab/popoolation2/populations/popoolation2_1201/fisher-test.pl"
+
+mkdir -p "$OUTDIR" logs
+
+cd "$CHUNKDIR"
+
+mapfile -t FILES < <(find . -maxdepth 1 -type f -name "scaffold*" | sort)
+
+if [[ "$SLURM_ARRAY_TASK_ID" -ge "${#FILES[@]}" ]]; then
+  echo "No file for SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID"
+  exit 1
+fi
+
+FILE="${FILES[$SLURM_ARRAY_TASK_ID]}"
+BASENAME="$(basename "$FILE" .sync)"
+OUTFILE="$OUTDIR/${BASE}.fet"
+
+echo "Running on file: $FILE"
+
+# min-count means, across the compared pools, the minor allele must be seen at least 6 times total (after filtering) for the SNP to be tested. 
+# So if a site is almost entirely one allele and the alternative allele only appears a tiny number of times, it get excluded. 
+
+# min-coverage specifies the minimum nuber of reads in a pool to be considered. This helps makes allele frequency estimates less noisy.
+
+# max-coverage specifies that a site cannot have more than 200 reads in a pool to be considered. This is used to avoid repetitive regions, mapping pileups, or paralogs. 
+
+# -suppress-noninformative tell popoolation2 to not print sites that don't contain useful information of the test. 
+# This skips sites that don't contribute meaningful information about differentiated sites. 
+
+perl "$SCRIPT" \
+  --input "$FILE" \
+  --output "$OUTFILE" \
+  --min-count 6 \
+  --min-coverage 50 \
+  --max-coverage 200 \
+  --suppress-noninformative 
+
+  echo "Finished $FILE"
