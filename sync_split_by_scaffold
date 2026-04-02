@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# For parallelization, this script splits the sync file according to scaffold by referencing the genome offset .tsv primary reference genome file.
+# This makes the process of FST, FET, and CMH calculation much faster while being reproducible and maintaining original genomic structure. 
+
+#SBATCH --partition=long
+#SBATCH --time=48:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --job-name=sync_split
+#SBATCH --output=sync_split.out
+#SBATCH --error=sync_split.err
+#SBATCH --array=1-999%20
+
+set -euo pipefail
+
+START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+echo "Script started at: $START_TIME"
+
+# Load environment
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+
+# Temporarily allows undefined variables as errors then turns strict mode back on 
+set +u
+conda activate popoolation2
+set -u
+
+# The unsplit sync file is organized in columns by: scaffold, BP, ref, pool1, and pool2 counts.
+# This allows us to split according to the information of column 1. 
+
+# Specifiy the directories we will be referencing: 
+SYNC="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/3p_3w.sync"
+OFFSETS="/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LP_primary_genome_offsets.tsv"
+OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/sync_by_scaffold"
+
+# Make sure the output directory exists
+mkdir -p "$OUTDIR"
+
+echo "Splitting $SYNC by scaffold..."
+echo "Output dir: $OUTDIR"
+
+# The command that begins storing the sync files split by the first column into the output directory. 
+awk -F'\t' -v outdir="$OUTDIR" '
+{
+  file = outdir "/" $1 ".sync"
+  print > file
+}
+' "$SYNC"
+
+echo "Done splitting."
+
+# Checking that the number of lines in the split sync files adds to the number of lines in the full sync file. 
+# This helps make sure the split process executed correctly. 
+echo "Counting output files:"
+find "$OUTDIR" -name "*.sync" | wc -l
+
+echo "First few files:"
+find "$OUTDIR" -name "*.sync" | sort | head
