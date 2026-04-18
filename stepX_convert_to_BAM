@@ -1,0 +1,66 @@
+#!/bin/bash
+#SBATCH --partition=medium
+#SBATCH --time=3:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=12
+#SBATCH --job-name=fastq_to_bam_1p
+#SBATCH --output=logs/1p_bam_%A_%a.out
+#SBATCH --error=logs/1p_bam_%A_%a.err
+#SBATCH --array=0-849%8
+
+set -euo pipefail
+set -x
+
+START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+echo "Script started at: $START_TIME"
+
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+
+set +u
+conda activate popoolation2
+set -u
+
+READDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR1/1p_fastq_split"
+REF="/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final.fa"
+OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR1/pop1p_bam_output"
+
+mkdir -p "$OUTDIR" logs
+
+# Read the actual FASTQ files present in the directory
+mapfile -t FASTQS < <(find "$READDIR" -maxdepth 1 -name "*.fastq.gz" | sort)
+
+# Stop if the task ID is larger than the number of files
+if [[ "$SLURM_ARRAY_TASK_ID" -ge "${#FASTQS[@]}" ]]; then
+    echo "ERROR: Task ID $SLURM_ARRAY_TASK_ID is out of range for ${#FASTQS[@]} files" >&2
+    exit 1
+fi
+
+FASTQ="${FASTQS[$SLURM_ARRAY_TASK_ID]}"
+BASE=$(basename "$FASTQ" .fastq.gz)
+
+echo "Task ID: $SLURM_ARRAY_TASK_ID"
+echo "FASTQ: $FASTQ"
+echo "BASE: $BASE"
+
+if [[ ! -f "$FASTQ" ]]; then
+    echo "ERROR: FASTQ file not found: $FASTQ" >&2
+    exit 1
+fi
+
+if [[ ! -f "${REF}.bwt" ]]; then
+    echo "ERROR: BWA index missing for reference: $REF" >&2
+    exit 1
+fi
+
+bwa mem -t 4 "$REF" "$FASTQ" 2> "$OUTDIR/${BASE}.bwa.stderr" \
+  | samtools sort -@ 4 -m 2G -o "$OUTDIR/${BASE}.sorted.bam" - \
+  2> "$OUTDIR/${BASE}.sort.stderr"
+
+samtools index -@ 4 "$OUTDIR/${BASE}.sorted.bam" \
+  2> "$OUTDIR/${BASE}.index.stderr"
+
+echo "Done: $OUTDIR/${BASE}.sorted.bam"
+
+END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+echo "Script ended at: $END_TIME"
+(END)
