@@ -1,0 +1,40 @@
+#!/bin/bash
+#SBATCH --partition=medium
+#SBATCH --time=4:00:00
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=16G
+#SBATCH --job-name=filter_4w_bam
+#SBATCH --output=logs/4w_filter_%A_%a.out
+#SBATCH --error=logs/4w_filter_%A_%a.err
+#SBATCH --array=0-1011%20
+
+set -euo pipefail
+set -x
+
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+
+set +u
+conda activate popoolation2
+set -u
+
+OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR4/pop4w_bam_output"
+
+mapfile -t BAMS < <(find "$OUTDIR" -maxdepth 1 -name "*.sorted.bam" | sort)
+
+if [[ "$SLURM_ARRAY_TASK_ID" -ge "${#BAMS[@]}" ]]; then
+    echo "ERROR: Task ID $SLURM_ARRAY_TASK_ID is out of range for ${#BAMS[@]} BAMs" >&2
+    exit 1
+fi
+
+SORTED_BAM="${BAMS[$SLURM_ARRAY_TASK_ID]}"
+BASE=$(basename "$SORTED_BAM" .sorted.bam)
+FILTERED_BAM="$OUTDIR/${BASE}.filtered.bam"
+
+echo "Task ID: $SLURM_ARRAY_TASK_ID"
+echo "SORTED_BAM: $SORTED_BAM"
+echo "FILTERED_BAM: $FILTERED_BAM"
+
+samtools view -b -F 2308 -q 20 "$SORTED_BAM" > "$FILTERED_BAM"
+samtools index "$FILTERED_BAM"
+
+echo "Done: $FILTERED_BAM"
