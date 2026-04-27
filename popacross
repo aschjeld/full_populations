@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# Script to merge all pink pools and white pools, respectively, and organize them in files according
+# to scaffold. 
+# Doing this in BAM format, as this preserves mapping quality, base quality, depth, allele counts,
+# and alignment position. 
+# This also lets us recalculate samtools and mpileup counts.
+# While this lets us see site-wide allele freuqency differences, it may silence site-specific 
+# differences (which is fine because we are doing this on individual patches, too). 
+
+#!/bin/bash
+#SBATCH --partition=medium
+#SBATCH --time=6:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --job-name=merge_by_scaffold
+#SBATCH --output=logs/merge_scaffold_%A_%a.out
+#SBATCH --error=logs/merge_scaffold_%A_%a.err
+#SBATCH --array=1-2630%20
+
+set -euo pipefail
+
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+set +u
+conda activate popoolation2
+set -u
+
+REF_FAI="/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final.fa.fai"
+
+OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR_all_pink_white/scaffold_bams"
+mkdir -p "$OUTDIR" logs
+
+SCAFFOLD=$(awk -v n="$SLURM_ARRAY_TASK_ID" 'NR==n {print $1}' "$REF_FAI")
+
+echo "Working on scaffold: $SCAFFOLD"
+
+PINK_LIST="$OUTDIR/all_pink_bams.txt"
+WHITE_LIST="$OUTDIR/all_white_bams.txt"
+
+# Navigate to each directory with patch-specific BAMS and put them all in a new file specific for color.
+find \
+/private/groups/kaylab/popoolation2/populations/fullpops/JR1/pop1p_bam_output \
+/private/groups/kaylab/popoolation2/populations/fullpops/JR2/pop2p_bam_output \
+/private/groups/kaylab/popoolation2/populations/fullpops/JR3/step1_split_fastq/pop3p_bam_output \
+/private/groups/kaylab/popoolation2/populations/fullpops/JR4/step1_split_fastq/pop4p_bam_output \
+-name "*.filtered.bam" | sort > "$PINK_LIST"
+
+find \
+/private/groups/kaylab/popoolation2/populations/fullpops/JR1/pop1w_bam_output \
+/private/groups/kaylab/popoolation2/populations/fullpops/JR2/pop2w_bam_output \
+/private/groups/kaylab/popoolation2/populations/fullpops/JR3/step1_split_fastq/pop3w_bam_output \
+/private/groups/kaylab/popoolation2/populations/fullpops/JR4/step1_split_fastq/pop4w_bam_output \
+-name "*.filtered.bam" | sort > "$WHITE_LIST"
+
+# Sppecify output name by color and scaffold
+PINK_OUT="$OUTDIR/all_pink_${SCAFFOLD}.bam"
+WHITE_OUT="$OUTDIR/all_white_${SCAFFOLD}.bam"
+
+# Use samtools to merge the BAM files into one BAM file
+# -@ 8 specifies 8 CPU threads for speed
+# -R says to only include alignments for that reference sequence 
+# -b says to only input BAM filenames from a textfile of this name
+# PINK_OUT is the output file where these will be located. 
+# samtools index will organize these into subfiles for easier access downstream
+samtools merge -@ 8 -R "$SCAFFOLD" -b "$PINK_LIST" "$PINK_OUT"
+samtools index "$PINK_OUT"
+
+samtools merge -@ 8 -R "$SCAFFOLD" -b "$WHITE_LIST" "$WHITE_OUT"
+samtools index "$WHITE_OUT"
+
+echo "Done: $SCAFFOLD"
