@@ -16,7 +16,7 @@
 #SBATCH --job-name=merge_by_scaffold
 #SBATCH --output=logs/merge_scaffold_%A_%a.out
 #SBATCH --error=logs/merge_scaffold_%A_%a.err
-#SBATCH --array=1-2630%20
+#SBATCH --array=1594-2630%10
 
 set -euo pipefail
 
@@ -25,9 +25,10 @@ set +u
 conda activate popoolation2
 set -u
 
-REF_FAI="/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final.fa.fai"
+REF_FAI="/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final
+.fa.fai"
 
-OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR_all_pink_white/scaffold_bams"
+OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/popacross/scaffold_bams"
 mkdir -p "$OUTDIR" logs
 
 SCAFFOLD=$(awk -v n="$SLURM_ARRAY_TASK_ID" 'NR==n {print $1}' "$REF_FAI")
@@ -38,34 +39,113 @@ PINK_LIST="$OUTDIR/all_pink_bams.txt"
 WHITE_LIST="$OUTDIR/all_white_bams.txt"
 
 # Navigate to each directory with patch-specific BAMS and put them all in a new file specific for color.
-find \
-/private/groups/kaylab/popoolation2/populations/fullpops/JR1/pop1p_bam_output \
-/private/groups/kaylab/popoolation2/populations/fullpops/JR2/pop2p_bam_output \
-/private/groups/kaylab/popoolation2/populations/fullpops/JR3/step1_split_fastq/pop3p_bam_output \
-/private/groups/kaylab/popoolation2/populations/fullpops/JR4/step1_split_fastq/pop4p_bam_output \
--name "*.filtered.bam" | sort > "$PINK_LIST"
+JR1P="/private/groups/kaylab/popoolation2/populations/fullpops/JR1/pop1p_bam_output"
+JR2P="/private/groups/kaylab/popoolation2/populations/fullpops/JR2/pop2p_bam_output"
+JR3P="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/step1_split_fastq/pop3p_bam_output"
+JR4P="/private/groups/kaylab/popoolation2/populations/fullpops/JR4/step1_split_fastq/pop4p_bam_output"
 
-find \
-/private/groups/kaylab/popoolation2/populations/fullpops/JR1/pop1w_bam_output \
-/private/groups/kaylab/popoolation2/populations/fullpops/JR2/pop2w_bam_output \
-/private/groups/kaylab/popoolation2/populations/fullpops/JR3/step1_split_fastq/pop3w_bam_output \
-/private/groups/kaylab/popoolation2/populations/fullpops/JR4/step1_split_fastq/pop4w_bam_output \
--name "*.filtered.bam" | sort > "$WHITE_LIST"
+find "$JR1P" "$JR2P" "$JR3P" "$JR4P" \
+  -maxdepth 1 \
+  -name "*.filtered.bam" \
+  | sort > "$PINK_LIST"
 
-# Sppecify output name by color and scaffold
+echo "Pink list:"
+wc -l "$PINK_LIST"
+head "$PINK_LIST"
+
+JR1W="/private/groups/kaylab/popoolation2/populations/fullpops/JR1/pop1w_bam_output"
+JR2W="/private/groups/kaylab/popoolation2/populations/fullpops/JR2/pop2w_bam_output"
+JR3W="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/step1_split_fastq/pop3w_bam_output"
+JR4W="/private/groups/kaylab/popoolation2/populations/fullpops/JR4/step1_split_fastq/pop4w_bam_output"
+
+find "$JR1W" "$JR2W" "$JR3W" "$JR4W" \
+  -maxdepth 1 \
+  -name "*.filtered.bam" \
+  | sort > "$WHITE_LIST"
+
+echo "White list:"
+wc -l "$WHITE_LIST"
+head "$WHITE_LIST"
+
+# Check they exist
+wc -l "$PINK_LIST" "$WHITE_LIST"
+
+# Now index missing pink BAM indexes
+while read -r bam; do
+    if [[ ! -f "${bam}.bai" ]]; then
+        echo "Indexing: $bam"
+        samtools index "$bam"
+    fi
+done < "$PINK_LIST"
+
+# Now index missing white BAM indexes
+while read -r bam; do
+    if [[ ! -f "${bam}.bai" ]]; then
+        echo "Indexing: $bam"
+        samtools index "$bam"
+    fi
+done < "$WHITE_LIST"
+# Specify output name by color and scaffold
 PINK_OUT="$OUTDIR/all_pink_${SCAFFOLD}.bam"
 WHITE_OUT="$OUTDIR/all_white_${SCAFFOLD}.bam"
 
-# Use samtools to merge the BAM files into one BAM file
-# -@ 8 specifies 8 CPU threads for speed
-# -R says to only include alignments for that reference sequence 
-# -b says to only input BAM filenames from a textfile of this name
-# PINK_OUT is the output file where these will be located. 
-# samtools index will organize these into subfiles for easier access downstream
-samtools merge -@ 8 -R "$SCAFFOLD" -b "$PINK_LIST" "$PINK_OUT"
+# Temporary batch directories for this scaffold
+PINK_BATCH_DIR="$OUTDIR/tmp_pink_batches_${SCAFFOLD}"
+WHITE_BATCH_DIR="$OUTDIR/tmp_white_batches_${SCAFFOLD}"
+
+mkdir -p "$PINK_BATCH_DIR" "$WHITE_BATCH_DIR"
+
+# ----------------------------
+# Pink batch merge
+# ----------------------------
+
+split -l 100 "$PINK_LIST" "$PINK_BATCH_DIR/pink_list_"
+
+PINK_BATCH_BAMS="$PINK_BATCH_DIR/pink_batch_bams.txt"
+: > "$PINK_BATCH_BAMS"
+
+for list in "$PINK_BATCH_DIR"/pink_list_*; do
+    base=$(basename "$list")
+    batch_bam="$PINK_BATCH_DIR/${base}.bam"
+
+    echo "Merging pink batch: $base for $SCAFFOLD"
+
+    samtools merge -@ 8 -R "$SCAFFOLD" -b "$list" "$batch_bam"
+    samtools index "$batch_bam"
+
+    echo "$batch_bam" >> "$PINK_BATCH_BAMS"
+done
+
+echo "Merging final pink BAM for $SCAFFOLD"
+
+samtools merge -@ 8 -R "$SCAFFOLD" -b "$PINK_BATCH_BAMS" "$PINK_OUT"
 samtools index "$PINK_OUT"
 
-samtools merge -@ 8 -R "$SCAFFOLD" -b "$WHITE_LIST" "$WHITE_OUT"
+
+# ----------------------------
+# White batch merge
+# ----------------------------
+
+split -l 100 "$WHITE_LIST" "$WHITE_BATCH_DIR/white_list_"
+
+WHITE_BATCH_BAMS="$WHITE_BATCH_DIR/white_batch_bams.txt"
+: > "$WHITE_BATCH_BAMS"
+
+for list in "$WHITE_BATCH_DIR"/white_list_*; do
+    base=$(basename "$list")
+    batch_bam="$WHITE_BATCH_DIR/${base}.bam"
+
+    echo "Merging white batch: $base for $SCAFFOLD"
+
+    samtools merge -@ 8 -R "$SCAFFOLD" -b "$list" "$batch_bam"
+    samtools index "$batch_bam"
+
+    echo "$batch_bam" >> "$WHITE_BATCH_BAMS"
+done
+
+echo "Merging final white BAM for $SCAFFOLD"
+
+samtools merge -@ 8 -R "$SCAFFOLD" -b "$WHITE_BATCH_BAMS" "$WHITE_OUT"
 samtools index "$WHITE_OUT"
 
 echo "Done: $SCAFFOLD"
