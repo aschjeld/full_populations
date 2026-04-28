@@ -1,0 +1,91 @@
+#!/bin/bash
+#SBATCH --partition=medium
+#SBATCH --time=8:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=24G
+#SBATCH --job-name=scaf_sync
+#SBATCH --output=logs/scaf_sync_%A_%a.out
+#SBATCH --error=logs/scaf_sync_%A_%a.err
+#SBATCH --array=1-2630%10
+
+# Split the full mpileup file by scaffold and convert each scaffold mpileup to sync.
+
+set -euo pipefail
+
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+set +u
+conda activate popoolation2
+set -u
+
+REF="/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final.fa"
+FAI="${REF}.fai"
+
+POPDIR="/private/groups/kaylab/popoolation2/populations/popoolation2_1201"
+
+WORKDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR1"
+OUTDIR="$WORKDIR/sync_by_scaffold"
+MPILEUP_FULL="$WORKDIR/1p_1w.mpileup"
+
+mkdir -p "$OUTDIR" logs
+
+SCAFFOLD=$(awk -v n="$SLURM_ARRAY_TASK_ID" 'NR==n {print $1}' "$FAI")
+
+MPILEUP_OUT="$OUTDIR/${SCAFFOLD}.mpileup"
+SYNC_OUT="$OUTDIR/${SCAFFOLD}.sync"
+TMP_SYNC="${SYNC_OUT}.tmp"
+
+echo "Task ID: $SLURM_ARRAY_TASK_ID"
+echo "Scaffold: $SCAFFOLD"
+echo "Full mpileup: $MPILEUP_FULL"
+echo "Scaffold mpileup: $MPILEUP_OUT"
+echo "Sync out: $SYNC_OUT"
+echo "Temporary sync: $TMP_SYNC"
+echo "Started at: $(date)"
+
+if [[ -z "$SCAFFOLD" ]]; then
+    echo "ERROR: No scaffold found for array task $SLURM_ARRAY_TASK_ID"
+    exit 1
+fi
+
+if [[ -s "$SYNC_OUT" ]]; then
+    echo "Sync already exists and is non-empty, skipping: $SYNC_OUT"
+    ls -lh "$SYNC_OUT"
+    exit 0
+fi
+
+rm -f "$TMP_SYNC"
+
+if [[ ! -s "$MPILEUP_OUT" ]]; then
+    echo "Creating scaffold mpileup..."
+    awk -v scaf="$SCAFFOLD" '$1 == scaf' "$MPILEUP_FULL" > "$MPILEUP_OUT"
+else
+    echo "Existing scaffold mpileup found, reusing: $MPILEUP_OUT"
+fi
+
+if [[ ! -s "$MPILEUP_OUT" ]]; then
+    echo "WARNING: no mpileup lines found for $SCAFFOLD"
+    exit 0
+fi
+
+echo "Scaffold mpileup size:"
+ls -lh "$MPILEUP_OUT"
+
+echo "Starting mpileup2sync at: $(date)"
+
+java -ea -Xmx20g -jar "$POPDIR/mpileup2sync.jar" \
+    --input "$MPILEUP_OUT" \
+    --output "$TMP_SYNC" \
+    --fastq-type sanger \
+    --min-qual 20 \
+    --threads 4
+
+if [[ ! -s "$TMP_SYNC" ]]; then
+    echo "ERROR: mpileup2sync finished but temporary sync is missing or empty: $TMP_SYNC"
+    exit 1
+fi
+
+mv "$TMP_SYNC" "$SYNC_OUT"
+
+echo "Finished mpileup2sync at: $(date)"
+echo "Done: $SYNC_OUT"
+ls -lh "$SYNC_OUT"
