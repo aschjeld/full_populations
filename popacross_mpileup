@@ -1,0 +1,93 @@
+# After the previous script, we now have two sets of files: pink bam and white bam across the site. 
+# Now we need to make one mpileup and one sync file per scaffold per pink and white bam file.
+
+#!/bin/bash
+#SBATCH --partition=medium
+#SBATCH --time=8:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=24G
+#SBATCH --job-name=popacross_sync
+#SBATCH --output=logs/sync_%A_%a.out
+#SBATCH --error=logs/sync_%A_%a.err
+#SBATCH --array=1-2630%20
+
+set -euo pipefail
+
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+set +u
+conda activate popoolation2
+set -u
+
+# Reference FASTA and index
+REF="/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final.fa"
+REF_FAI="${REF}.fai"
+
+POPOOLATION2="/private/groups/kaylab/popoolation2/popoolation2_1201"
+
+BAMDIR="/private/groups/kaylab/popoolation2/populations/fullpops/popacross/scaffold_bams"
+OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/popacross/sync_by_scaffold"
+
+mkdir -p "$OUTDIR" logs
+
+SCAFFOLD=$(awk -v n="$SLURM_ARRAY_TASK_ID" 'NR==n {print $1}' "$REF_FAI")
+
+echo "Working on scaffold: $SCAFFOLD"
+
+PINK_BAM="$BAMDIR/all_pink_${SCAFFOLD}.bam"
+WHITE_BAM="$BAMDIR/all_white_${SCAFFOLD}.bam"
+
+MPILEUP_OUT="$OUTDIR/${SCAFFOLD}.mpileup"
+SYNC_OUT="$OUTDIR/${SCAFFOLD}.sync"
+
+# Skip completed scaffold
+if [[ -s "$SYNC_OUT" ]]; then
+    echo "Sync already exists and is non-empty, skipping:"
+    echo "$SYNC_OUT"
+    exit 0
+fi
+
+# Check BAMs exist
+if [[ ! -s "$PINK_BAM" ]]; then
+    echo "Missing pink BAM: $PINK_BAM"
+    exit 1
+fi
+
+if [[ ! -s "$WHITE_BAM" ]]; then
+    echo "Missing white BAM: $WHITE_BAM"
+    exit 1
+fi
+
+# Index BAMs if needed
+if [[ ! -f "${PINK_BAM}.bai" ]]; then
+    echo "Indexing pink BAM"
+    samtools index "$PINK_BAM"
+fi
+
+if [[ ! -f "${WHITE_BAM}.bai" ]]; then
+    echo "Indexing white BAM"
+    samtools index "$WHITE_BAM"
+fi
+
+echo "Creating mpileup"
+
+samtools mpileup \
+    -B \
+    -Q 0 \
+    -f "$REF" \
+    -r "$SCAFFOLD" \
+    "$PINK_BAM" "$WHITE_BAM" \
+    > "$MPILEUP_OUT"
+
+echo "Converting mpileup to sync"
+
+java -ea -Xmx20g -jar "$POPOOLATION2/mpileup2sync.jar" \
+    --input "$MPILEUP_OUT" \
+    --output "${SYNC_OUT}.tmp" \
+    --fastq-type sanger \
+    --min-qual 20 \
+    --threads 8
+
+mv "${SYNC_OUT}.tmp" "$SYNC_OUT"
+
+echo "Done:"
+echo "$SYNC_OUT"
