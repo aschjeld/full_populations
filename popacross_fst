@@ -1,0 +1,70 @@
+#!/bin/bash
+
+This script produces one fst file per input sync file for comparing across-site pink- and white-flowered allele frequencies. 
+
+# This makes the script stop if any command fails (e), if any undefined variable is used (u), and if any part of the pipeline 
+# fails (o)
+set -euo pipefail
+
+# Load conda environment that includes perl 
+# set +u temporarily turns off the "undefined variable" rule because conda activation sometimes usess unset variables
+source /private/groups/kaylab/aschjeld/setup_conda.sh
+set +u
+conda activate popoolation2
+set -u
+
+# Location for the installed Perl tools, specified because PoPoolation2 relies on a few modules that aren't installed
+# globally.
+export PATH="$HOME/perl5/bin:$PATH"
+export PERL5LIB="$HOME/perl5/lib/perl5:${PERL5LIB:-}"
+
+# Sets a consistent language environment to avoid weird sorting issues
+export LC_ALL=C
+export LANG=C
+
+# Define main paths
+
+# Main directory for the across-site analysus
+POPDIR="/private/groups/kaylab/popoolation2/populations/fullpops/popacross"
+
+# Where this script will output the fst files
+OUTDIR="$POPDIR/fst"
+
+# Text file containing sync files to process
+FILE_LIST="$POPDIR/sync_files_for_fst.txt"
+
+# Path to PoPoolation2's fst-sliding.pl which is required for this analysis and includes the heavy-lifting code to compare
+# allele frequency differences.
+SCRIPT="/private/groups/kaylab/popoolation2/populations/popoolation2_1201/fst-sliding.pl"
+
+mkdir -p "$OUTDIR" "$POPDIR/logs"
+
+# This uses the task array ID to pick from one sync_files_for_fst.txt so that each array processes one file. 
+FILE=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$FILE_LIST")
+# This extracts the file name without the ".sync" file name ending
+BASENAME=$(basename "$FILE" .sync)
+
+# To verify which task is running on which file and what output it produces:
+echo "Task ID: $SLURM_ARRAY_TASK_ID"
+echo "Running on file: $FILE"
+echo "Output: $OUTDIR/${BASENAME}.fst"
+
+# Primary chunk that runs PoPoolation2's fst-sliding.pl, which reads the selected .sync file and writes a matching .fst file.
+# min-count specified to 10, so only alleles with at least 10 counts are considered
+# min-coverage is 50, so each position has to have at least 50x coverage at each site to be considered
+# max-coverage is 200, so each position must be below 200x coverage to be considerede. This reduces repettiive or poorly mapped
+# regions where depth is suspicioudly high.
+# min-covered fraction is 0.5, which requires at least 50% of the window to have usable coverage. Since in this script I 
+# have a window size of 1, this specification means that position must simply pass the above coverage requirements.
+# Pool size is specified to 100:79 to reflect the number of individuals in each pool. These numbers should match the actual number of
+# chromosomes sampled in each pool. Since all pinks (25 + 25 + 25 + 25) = 100 * 2 chromosomes = 200 
+perl "$SCRIPT" \
+  --input "$FILE" \
+  --output "$OUTDIR/${BASENAME}.fst" \
+  --min-count 10 \
+  --min-coverage 50 \
+  --max-coverage 200 \
+  --min-covered-fraction 0.5 \
+  --window-size 1 \
+  --step-size 1 \
+  --pool-size 100:79
