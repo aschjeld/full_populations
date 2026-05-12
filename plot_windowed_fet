@@ -1,0 +1,283 @@
+#!/usr/bin/env Rscript
+
+suppressPackageStartupMessages({
+  library(data.table)
+  library(ggplot2)
+})
+
+# ============================================================
+# USER SETTINGS
+# ============================================================
+
+INDIR  <- "/private/groups/kaylab/popoolation2/populations/fullpops/JR3/fst_fet_stuff/step6_Fst/looseFET"
+FAI    <- "/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final.fa.fai"
+OUTDIR <- file.path(INDIR, "windowed_plot_output")
+
+PREFIX <- "JR3_FET"
+
+WINDOW_SIZE <- 10000
+LABEL_EVERY <- 10
+
+MIN_SCAFFOLD_LEN <- 0
+
+# IMPORTANT:
+# For PoPoolation2 FST output, column 3 is the number of SNPs used.
+# This removes windows like:
+# scaffold_1396 6854 0 0.000 0.0 1:2=na
+MIN_WINDOW_SNPS_RAW <- 1
+
+# For the final re-windowed 10 kb plot
+MIN_WINDOW_SNPS_FINAL <- 1
+
+# Optional: reduce plotted points if there are millions of windows
+MAX_POINTS_TO_PLOT <- 500000
+
+dir.create(OUTDIR, recursive = TRUE, showWarnings = FALSE)
+
+WINDOW_FILE <- file.path(
+  OUTDIR,
+  paste0(PREFIX, "_windowed_", WINDOW_SIZE, "bp.tsv.gz")
+)
+
+PLOT_FILE <- file.path(
+  OUTDIR,
+  paste0(PREFIX, "_windowed_", WINDOW_SIZE, "bp.png")
+)
+
+# ============================================================
+# READ FAI
+# ============================================================
+
+read_fai <- function(fai_file, min_scaffold_len = 0) {
+  fai <- fread(fai_file, header = FALSE)
+  fai <- fai[, .(CHR = V1, LEN = as.numeric(V2))]
+
+  fai[, scaffold_num := suppressWarnings(as.numeric(sub("^scaffold_", "", CHR)))]
+
+  if (all(!is.na(fai$scaffold_num))) {
+    setorder(fai, scaffold_num)
+  } else {
+    setorder(fai, -LEN)
+  }
+
+  fai <- fai[LEN >= min_scaffold_len]
+
+  fai[, OFFSET := cumsum(as.numeric(shift(LEN, fill = 0)))]
+    fai[, END := OFFSET + LEN]
+  fai[, MID := OFFSET + LEN / 2]
+  fai[, COLOR_GROUP := rep(c("A", "B"), length.out = .N)]
+
+  fai[, .(CHR, LEN, OFFSET, END, MID, COLOR_GROUP)]
+}
+
+# ============================================================
+# READ ONE POOPOOLATION2 FST FILE
+# ============================================================
+
+read_fst_file <- function(file) {
+  dt <- tryCatch(
+    fread(file, header = FALSE, sep = "\t", fill = TRUE, showProgress = FALSE),
+    error = function(e) NULL
+  )
+
+  if (is.null(dt) || nrow(dt) == 0) return(NULL)
+  if (ncol(dt) < 6) return(NULL)
+
+  # PoPoolation2 FST columns usually:
+  # V1 = scaffold
+  # V2 = position/window position
+  # V3 = number of SNPs used
+  # V6 = pairwise FST field, e.g. 1:2=0.123 or 1:2=na
+  dt <- dt[, .(
+    CHR = V1,
+    BP = suppressWarnings(as.numeric(V2)),
+    RAW_N_SNPS = suppressWarnings(as.numeric(V3)),
+    VALUE = V6
+  )]
+
+dt[, FST := suppressWarnings(as.numeric(sub(".*=", "", VALUE)))]
+
+  dt <- dt[
+    !is.na(CHR) &
+      !is.na(BP) &
+      !is.na(FST) &
+      RAW_N_SNPS >= MIN_WINDOW_SNPS_RAW &
+      LOG10P >= 0
+  ]
+
+  if (nrow(dt) == 0) return(NULL)
+
+  dt[, .(CHR, BP, RAW_N_SNPS, FST)]
+}
+# ============================================================
+# REDUCE TO FIXED WINDOWS
+# ============================================================
+
+reduce_to_windows <- function(dt, window_size = 10000, min_window_snps_final = 1) {
+  if (is.null(dt) || nrow(dt) == 0) return(NULL)
+
+  dt[, WINDOW_START := ((BP - 1) %/% window_size) * window_size + 1]
+  dt[, WINDOW_END := WINDOW_START + window_size - 1]
+
+  out <- dt[, .(
+    N_RECORDS = .N,
+    N_SNPS = sum(RAW_N_SNPS, na.rm = TRUE),
+
+  ), by = .(CHR, WINDOW_START, WINDOW_END)]
+
+  out <- out[N_SNPS >= min_window_snps_final]
+  MEAN_LOG10P = mean(LOG10P, na.rm = TRUE)
+  if (nrow(out) == 0) return(NULL)
+  out[]
+}
+# ============================================================
+# MAIN
+# ============================================================
+
+cat("Reading FAI...\n")
+fai <- read_fai(FAI, min_scaffold_len = MIN_SCAFFOLD_LEN)
+cat("Scaffolds retained:", nrow(fai), "\n\n")
+
+cat("Finding FST files...\n")
+files <- sort(list.files(INDIR, pattern = "\\.fet$", full.names = TRUE))
+cat("Number of .fst files found:", length(files), "\n\n")
+
+if (length(files) == 0) {
+  stop("No .fst files found in INDIR.")
+}
+
+window_list <- vector("list", length(files))
+
+cat("Reducing FST files to", WINDOW_SIZE, "bp windows...\n\n")
+
+for (i in seq_along(files)) {
+  f <- files[i]
+
+  if (i %% 50 == 0 || i == 1 || i == length(files)) {
+    cat("[", i, "/", length(files), "] ", basename(f), "\n", sep = "")
+  }
+
+  dt <- read_fst_file(f)
+
+  if (is.null(dt)) next
+
+  dt <- dt[CHR %in% fai$CHR]
+  if (nrow(dt) == 0) {
+    rm(dt)
+    next
+  }
+
+  reduced <- reduce_to_windows(
+    dt,
+    window_size = WINDOW_SIZE,
+    min_window_snps_final = MIN_WINDOW_SNPS_FINAL
+  )
+
+  rm(dt)
+
+  if (!is.null(reduced) && nrow(reduced) > 0) {
+    window_list[[i]] <- reduced
+  }
+
+  if (i %% 100 == 0) gc()
+}
+
+cat("\nCombining reduced windows...\n")
+window_list <- Filter(Negate(is.null), window_list)
+
+if (length(window_list) == 0) {
+  stop("No usable windows were produced.")
+}
+
+win_dt <- rbindlist(window_list, use.names = TRUE, fill = TRUE)
+rm(window_list)
+gc()
+
+# Re-combine duplicate scaffold/window entries if present
+win_dt <- win_dt[, .(
+  N_RECORDS = sum(N_RECORDS, na.rm = TRUE),
+  N_SNPS = sum(N_SNPS, na.rm = TRUE),
+  MEAN_FST = weighted.mean(MEAN_FST, w = pmax(N_SNPS, 1), na.rm = TRUE)
+), by = .(CHR, WINDOW_START, WINDOW_END)]
+
+cat("Final number of unique windows:", nrow(win_dt), "\n\n")
+
+cat("Adding genome offsets...\n")
+win_dt <- merge(win_dt, fai, by = "CHR", all.x = TRUE)
+win_dt <- win_dt[!is.na(OFFSET)]
+
+win_dt[, BPcum := OFFSET + ((WINDOW_START + WINDOW_END) / 2)]
+setorder(win_dt, OFFSET, WINDOW_START)
+
+cat("Writing window table...\n")
+fwrite(win_dt, WINDOW_FILE, sep = "\t")
+
+# ============================================================
+# OPTIONAL THINNING FOR PLOTTING ONLY
+# ============================================================
+
+plot_dt <- copy(win_dt)
+
+if (!is.null(MAX_POINTS_TO_PLOT) && nrow(plot_dt) > MAX_POINTS_TO_PLOT) {
+  set.seed(1)
+  plot_dt <- plot_dt[sample(.N, MAX_POINTS_TO_PLOT)]
+  setorder(plot_dt, OFFSET, WINDOW_START)
+  cat("Plotting thinned data:", nrow(plot_dt), "points\n")
+} else {
+  cat("Plotting all windows:", nrow(plot_dt), "points\n")
+}
+
+axis_dt <- fai[, .(CHR, MID, COLOR_GROUP)]
+
+axis_dt[, scaffold_num := suppressWarnings(
+  as.numeric(sub("^scaffold_", "", CHR))
+)]
+
+axis_dt[, LABEL := fifelse(
+  scaffold_num <= 100 & scaffold_num %% 10 == 0,
+  CHR,
+  fifelse(scaffold_num %% 500 == 0, CHR, "")
+)]
+
+# ============================================================
+# PLOT
+# ============================================================
+
+cat("Making PNG plot...\n")
+
+p <- ggplot(plot_dt, aes(x = BPcum, y = MEAN_FST, color = COLOR_GROUP)) +
+  geom_point(size = 0.25, alpha = 0.7, stroke = 0) +
+  scale_color_manual(values = c("A" = "grey20", "B" = "grey60")) +
+  scale_x_continuous(
+    labels = axis_dt$LABEL,
+    breaks = axis_dt$MID,
+    expand = c(0.005, 0.005)
+  ) +
+  labs(
+    title = "JR3 Genome-wide Fisher's Exact Test (10 kb windows)",
+    subtitle = paste0(
+      "Window size = ", WINDOW_SIZE,
+      " bp; value = mean FST per window; windows with na/0-SNP FST removed"
+    ),
+    x = "Scaffold",
+    y = paste0("Mean ", WINDOW_SIZE, " bp window FST")
+  ) +
+  theme_bw(base_size = 12) +
+
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(
+      angle = 90,
+      vjust = 0.5,
+      hjust = 1,
+      size = 4
+    )
+)
+
+ggsave(PLOT_FILE, p, width = 16, height = 7, units = "in", dpi = 300, bg = "white")
+
+cat("\nDone.\n")
+cat("Window table: ", WINDOW_FILE, "\n", sep = "")
+cat("PNG plot:     ", PLOT_FILE, "\n", sep = "")
