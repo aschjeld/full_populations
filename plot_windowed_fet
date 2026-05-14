@@ -9,27 +9,19 @@ suppressPackageStartupMessages({
 # USER SETTINGS
 # ============================================================
 
-INDIR  <- "/private/groups/kaylab/popoolation2/populations/fullpops/JR3/fst_fet_stuff/step6_Fst/looseFET"
-FAI    <- "/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final.fa.fai"
+INDIR  <- "/private/groups/kaylab/popoolation2/populations/fullpops/JR2/fet_by_scaffold"
+FAI    <- "/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final.fa.f
+ai"
 OUTDIR <- file.path(INDIR, "windowed_plot_output")
 
-PREFIX <- "JR3_FET"
+PREFIX <- "JR2_FET"
 
 WINDOW_SIZE <- 10000
-LABEL_EVERY <- 10
 
 MIN_SCAFFOLD_LEN <- 0
-
-# IMPORTANT:
-# For PoPoolation2 FST output, column 3 is the number of SNPs used.
-# This removes windows like:
-# scaffold_1396 6854 0 0.000 0.0 1:2=na
 MIN_WINDOW_SNPS_RAW <- 1
-
-# For the final re-windowed 10 kb plot
 MIN_WINDOW_SNPS_FINAL <- 1
 
-# Optional: reduce plotted points if there are millions of windows
 MAX_POINTS_TO_PLOT <- 500000
 
 dir.create(OUTDIR, recursive = TRUE, showWarnings = FALSE)
@@ -47,10 +39,19 @@ PLOT_FILE <- file.path(
 # ============================================================
 # READ FAI
 # ============================================================
-
 read_fai <- function(fai_file, min_scaffold_len = 0) {
-  fai <- fread(fai_file, header = FALSE)
-  fai <- fai[, .(CHR = V1, LEN = as.numeric(V2))]
+  fai <- fread(fai_file, header = FALSE, sep = "\t", fill = TRUE)
+
+  if (ncol(fai) < 2) {
+    stop("FAI file was not read correctly. Expected at least 2 columns: scaffold name and scaffold length. Check FAI path and file format.")
+  }
+
+  fai <- fai[, .(
+    CHR = V1,
+    LEN = as.numeric(V2)
+  )]
+
+  fai <- fai[!is.na(CHR) & !is.na(LEN)]
 
   fai[, scaffold_num := suppressWarnings(as.numeric(sub("^scaffold_", "", CHR)))]
 
@@ -63,18 +64,17 @@ read_fai <- function(fai_file, min_scaffold_len = 0) {
   fai <- fai[LEN >= min_scaffold_len]
 
   fai[, OFFSET := cumsum(as.numeric(shift(LEN, fill = 0)))]
-    fai[, END := OFFSET + LEN]
+  fai[, END := OFFSET + LEN]
   fai[, MID := OFFSET + LEN / 2]
   fai[, COLOR_GROUP := rep(c("A", "B"), length.out = .N)]
 
   fai[, .(CHR, LEN, OFFSET, END, MID, COLOR_GROUP)]
 }
-
 # ============================================================
-# READ ONE POOPOOLATION2 FST FILE
+# READ ONE POOPOOLATION2 FET FILE
 # ============================================================
 
-read_fst_file <- function(file) {
+read_fet_file <- function(file) {
   dt <- tryCatch(
     fread(file, header = FALSE, sep = "\t", fill = TRUE, showProgress = FALSE),
     error = function(e) NULL
@@ -83,11 +83,6 @@ read_fst_file <- function(file) {
   if (is.null(dt) || nrow(dt) == 0) return(NULL)
   if (ncol(dt) < 6) return(NULL)
 
-  # PoPoolation2 FST columns usually:
-  # V1 = scaffold
-  # V2 = position/window position
-  # V3 = number of SNPs used
-  # V6 = pairwise FST field, e.g. 1:2=0.123 or 1:2=na
   dt <- dt[, .(
     CHR = V1,
     BP = suppressWarnings(as.numeric(V2)),
@@ -95,20 +90,21 @@ read_fst_file <- function(file) {
     VALUE = V6
   )]
 
-dt[, FST := suppressWarnings(as.numeric(sub(".*=", "", VALUE)))]
+  dt[, LOG10P := suppressWarnings(as.numeric(sub(".*=", "", VALUE)))]
 
   dt <- dt[
     !is.na(CHR) &
       !is.na(BP) &
-      !is.na(FST) &
+      !is.na(LOG10P) &
       RAW_N_SNPS >= MIN_WINDOW_SNPS_RAW &
       LOG10P >= 0
   ]
 
   if (nrow(dt) == 0) return(NULL)
 
-  dt[, .(CHR, BP, RAW_N_SNPS, FST)]
+  dt[, .(CHR, BP, RAW_N_SNPS, LOG10P)]
 }
+
 # ============================================================
 # REDUCE TO FIXED WINDOWS
 # ============================================================
@@ -122,14 +118,16 @@ reduce_to_windows <- function(dt, window_size = 10000, min_window_snps_final = 1
   out <- dt[, .(
     N_RECORDS = .N,
     N_SNPS = sum(RAW_N_SNPS, na.rm = TRUE),
-
+    MEAN_LOG10P = mean(LOG10P, na.rm = TRUE),
+    MAX_LOG10P = max(LOG10P, na.rm = TRUE)
   ), by = .(CHR, WINDOW_START, WINDOW_END)]
 
   out <- out[N_SNPS >= min_window_snps_final]
-  MEAN_LOG10P = mean(LOG10P, na.rm = TRUE)
+
   if (nrow(out) == 0) return(NULL)
   out[]
 }
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -138,17 +136,17 @@ cat("Reading FAI...\n")
 fai <- read_fai(FAI, min_scaffold_len = MIN_SCAFFOLD_LEN)
 cat("Scaffolds retained:", nrow(fai), "\n\n")
 
-cat("Finding FST files...\n")
+cat("Finding FET files...\n")
 files <- sort(list.files(INDIR, pattern = "\\.fet$", full.names = TRUE))
-cat("Number of .fst files found:", length(files), "\n\n")
+cat("Number of .fet files found:", length(files), "\n\n")
 
 if (length(files) == 0) {
-  stop("No .fst files found in INDIR.")
+  stop("No .fet files found in INDIR.")
 }
 
 window_list <- vector("list", length(files))
 
-cat("Reducing FST files to", WINDOW_SIZE, "bp windows...\n\n")
+cat("Reducing FET files to", WINDOW_SIZE, "bp windows...\n\n")
 
 for (i in seq_along(files)) {
   f <- files[i]
@@ -157,11 +155,12 @@ for (i in seq_along(files)) {
     cat("[", i, "/", length(files), "] ", basename(f), "\n", sep = "")
   }
 
-  dt <- read_fst_file(f)
+  dt <- read_fet_file(f)
 
   if (is.null(dt)) next
 
   dt <- dt[CHR %in% fai$CHR]
+
   if (nrow(dt) == 0) {
     rm(dt)
     next
@@ -193,11 +192,11 @@ win_dt <- rbindlist(window_list, use.names = TRUE, fill = TRUE)
 rm(window_list)
 gc()
 
-# Re-combine duplicate scaffold/window entries if present
 win_dt <- win_dt[, .(
   N_RECORDS = sum(N_RECORDS, na.rm = TRUE),
   N_SNPS = sum(N_SNPS, na.rm = TRUE),
-  MEAN_FST = weighted.mean(MEAN_FST, w = pmax(N_SNPS, 1), na.rm = TRUE)
+  MEAN_LOG10P = mean(MEAN_LOG10P, na.rm = TRUE),
+  MAX_LOG10P = max(MAX_LOG10P, na.rm = TRUE)
 ), by = .(CHR, WINDOW_START, WINDOW_END)]
 
 cat("Final number of unique windows:", nrow(win_dt), "\n\n")
@@ -227,16 +226,20 @@ if (!is.null(MAX_POINTS_TO_PLOT) && nrow(plot_dt) > MAX_POINTS_TO_PLOT) {
   cat("Plotting all windows:", nrow(plot_dt), "points\n")
 }
 
+# ============================================================
+# AXIS LABELS
+# Label every 10th scaffold through scaffold_100,
+# then every 500th scaffold after that.
+# ============================================================
+
 axis_dt <- fai[, .(CHR, MID, COLOR_GROUP)]
 
-axis_dt[, scaffold_num := suppressWarnings(
-  as.numeric(sub("^scaffold_", "", CHR))
-)]
+axis_dt[, scaffold_num := suppressWarnings(as.numeric(sub("^scaffold_", "", CHR)))]
 
 axis_dt[, LABEL := fifelse(
   scaffold_num <= 100 & scaffold_num %% 10 == 0,
   CHR,
-  fifelse(scaffold_num %% 500 == 0, CHR, "")
+  fifelse(scaffold_num > 100 & scaffold_num %% 500 == 0, CHR, "")
 )]
 
 # ============================================================
@@ -245,8 +248,8 @@ axis_dt[, LABEL := fifelse(
 
 cat("Making PNG plot...\n")
 
-p <- ggplot(plot_dt, aes(x = BPcum, y = MEAN_FST, color = COLOR_GROUP)) +
-  geom_point(size = 0.25, alpha = 0.7, stroke = 0) +
+p <- ggplot(plot_dt, aes(x = BPcum, y = MEAN_LOG10P, color = COLOR_GROUP)) +
+  geom_point(size = 0.65, alpha = 0.7, stroke = 0) +
   scale_color_manual(values = c("A" = "grey20", "B" = "grey60")) +
   scale_x_continuous(
     labels = axis_dt$LABEL,
@@ -254,16 +257,15 @@ p <- ggplot(plot_dt, aes(x = BPcum, y = MEAN_FST, color = COLOR_GROUP)) +
     expand = c(0.005, 0.005)
   ) +
   labs(
-    title = "JR3 Genome-wide Fisher's Exact Test (10 kb windows)",
+    title = "JR2 Genome-wide Fisher's Exact Test",
     subtitle = paste0(
       "Window size = ", WINDOW_SIZE,
-      " bp; value = mean FST per window; windows with na/0-SNP FST removed"
+      " bp; value = mean -log10(p) per window"
     ),
     x = "Scaffold",
-    y = paste0("Mean ", WINDOW_SIZE, " bp window FST")
+    y = expression("Mean " * -log[10](p) * " per 10 kb window")
   ) +
   theme_bw(base_size = 12) +
-
   theme(
     legend.position = "none",
     panel.grid.major.x = element_blank(),
@@ -274,9 +276,17 @@ p <- ggplot(plot_dt, aes(x = BPcum, y = MEAN_FST, color = COLOR_GROUP)) +
       hjust = 1,
       size = 4
     )
-)
+  )
 
-ggsave(PLOT_FILE, p, width = 16, height = 7, units = "in", dpi = 300, bg = "white")
+ggsave(
+  PLOT_FILE,
+  p,
+  width = 20,
+  height = 7,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
 
 cat("\nDone.\n")
 cat("Window table: ", WINDOW_FILE, "\n", sep = "")
