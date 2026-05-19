@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# script to split FASTQ into chunks for later alignment to the references genome using an array. 
+# Script to partition complete FASTQ into smaller files for parallelization. 
 
 #SBATCH --job-name=split_big_fastq
 #SBATCH --partition=medium
@@ -15,6 +15,9 @@
 # splitting by whole reads, using split2 command
 source /private/groups/kaylab/aschjeld/setup_conda.sh
 
+# The following set +u, set -u control the shell's handling of unset variables. set +u enables the script to 
+# function if an error is present. I turn this on when activating the Conda environment because it had a lot of 
+# dependencies that may hav undefined variables. After activating Conda, I turn this setting off with set -u. 
 set +u
 conda activate /private/groups/kaylab/aschjeld/conda_envs/seqkit_env
 set -u
