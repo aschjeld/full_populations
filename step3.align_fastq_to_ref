@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Script to that aligns FASTQ to the reference genome.
+# It takes FASTQ files, run them through BWA mem to align to ref, samtools sort, filter bad reads, reindex the bam, and delete the 
+# intermediate BAM. This results in reads from each pool in BAM format, with only primary mapped alignments.  
+
 #SBATCH --partition=long
 #SBATCH --time=48:00:00
 #SBATCH --cpus-per-task=8
@@ -9,6 +13,7 @@
 #SBATCH --error=logs/4p_align_%A_%a.err
 #SBATCH --array=1-879%20
 
+# if any variable is undefined, end the script
 set -euo pipefail
 
 START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
@@ -23,33 +28,42 @@ conda activate popoolation2
 set -u
 
 
-# Specify directories and files
+# Specify directories and split FASTQ files
 READDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR4/4p_fastq_split"
 REF="/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final.fa"
 OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR4/pop4p_bam_output"
 
 mkdir -p "$OUTDIR" logs
 
+# Build the FASTQ filename form the array task ID. 
+# Takes the above READDIR location and task array ID, and combines that information to make the filename. 
+# %03d specifies that the task ID is an integer and should have three digits with zeros. 
 FASTQ=$(printf "%s/pop4p.part_%03d.fastq.gz" "$READDIR" "$SLURM_ARRAY_TASK_ID")
+# exact filename without extension, it removes the directory path and .fastq.gz from the original filename. 
 BASE=$(basename "$FASTQ" .fastq.gz)
 
-
-# command to align split fastq to the reference genome
+# Align split fastq files to the reference genome. Takes sequence reads from FASTQ, aligns to reference, and outputs a SAM-format alignment. 
 # -t 4 specifies the number of threads to use. 
-
 bwa mem -t 4 "$REF" "$FASTQ" \
   | samtools sort -@ 4 -m 2G  -o "$OUTDIR/${BASE}.sorted.bam" -
 
-# index the BAM
+# Create the BAM index.
+# creates .sorted.bam.bai files which allow quick access to regions of the genome. 
 samtools index -@ 4 "$OUTDIR/${BASE}.sorted.bam"
 
+# Define variable names of the sorted and filtered bams. 
 SORTED_BAM="$OUTDIR/${BASE}.sorted.bam"
 FILTERED_BAM="$OUTDIR/${BASE}.filtered.bam"
 
 # Remove ambiguous/low quality reads
+# this removes reads with a MAPQ less than 20, removes reads with the 4, 256, and 2048 SAM flags which correspond to
+# unmapped reads, secondary mapping, and supplementary mappings. This will only keep primary mapped alignments.
 samtools view -b -F 2308 -q 20 "$SORTED_BAM" > "$FILTERED_BAM"
+
+# index the filtered BAM. Creates new .filtered.bam.bai
 samtools index "$FILTERED_BAM"
 
+# remove the unfiltered BAM 
 rm "$SORTED_BAM"
 rm -f "${SORTED_BAM}.bai"
 
