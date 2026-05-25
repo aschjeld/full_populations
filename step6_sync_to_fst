@@ -1,4 +1,3 @@
-
 #!/bin/bash
 #SBATCH --job-name=fst
 #SBATCH --partition=long
@@ -9,45 +8,68 @@
 #SBATCH --output=fst.out
 #SBATCH --error=fst.err
 
+# Load conda environment for the popoolation2 pipeline
 source /private/groups/kaylab/aschjeld/setup_conda.sh
 conda activate popoolation2
 
+# Specify file path for Perl, so the correct moculde is used for the step below. Without this specification, the 
+# incorrect Perl module is used. 
 export PATH="$HOME/perl5/bin:$PATH"
 export PERL5LIB="$HOME/perl5/lib/perl5:${PERL5LIB:-}"
 
+# Forces a single language environment to avoid "locale" warnings. 
 export LC_ALL=C
 export LANG=C
 
+# Activate strict debug mode to stop the script if a command fails, if an unidentified variable is used, and to print 
+# each command as it runs. This helps debugging, so I can tell how far the script got and keep it from running through
+# faulty commands if they are accidentally present.
 set -euo pipefail
 set -x
 
-CHUNKDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/sync_by_scaffold"
-OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/fst"
-SCRIPT="/private/groups/kaylab/popoolation2/populations/popoolation2_1201/fst-sliding.pl"
+# Complete directory paths to the sync files, the output directory, and the primiary PoPoolation2 script, respectively.
+# Defining them this way lets me refer to each file location easier. 
+chunkdir="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/sync_by_scaffold"
+outdir="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/fst"
+script="/private/groups/kaylab/popoolation2/populations/popoolation2_1201/fst-sliding.pl"
 
-mkdir -p "$OUTDIR" logs
+# Ensure that the above output directories for .fst and error/output files exist. 
+mkdir -p "$outdir" logs
 
-cd "$CHUNKDIR"
+# Go to the .sync file directory
+cd "$chunkdir"
 
-mapfile -t FILES < <(find . -maxdepth 1 -type f -name "scaffold*" | sort)
+# Find all file in the .sync directory starting with "scaffold", sort them by number, and store them in a Bash array called "files"
+mapfile -t files < <(find . -maxdepth 1 -type f -name "scaffold*" | sort)
 
-if [[ "$SLURM_ARRAY_TASK_ID" -ge "${#FILES[@]}" ]]; then
-  echo "No file for SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID"
+# Check whether the correct Slurm array task number is larger than the number of files. If yes, it will exit here instead of crashing
+# later on. 
+if [[ "$slurm_array_task_id" -ge "${#files[@]}" ]]; then
+  echo "No file for slurm_array_task_id=$slurm_array_task_id"
   exit 1
 fi
 
-FILE="${FILES[$SLURM_ARRAY_TASK_ID]}"
-BASENAME="$(basename "$FILE" .sync)"
+# Select one .sync file based on the Slurm array task ID and remove the .sync name from the end so the new name is 
+# only the scaffold name. 
+file="${files[$slurm_array_task_id]}"
+basename="$(basename "$file" .sync)"
 
-echo "Running on file: $FILE"
+# Print which file this task is processing. 
+echo "Running on file: $file"
 
-perl "$SCRIPT" \
-  --input "$FILE" \
-  --output "$OUTDIR/${BASENAME}.fst" \
+# Run the PoPoolation2 FST script on that .sync file and write the output to the FST directory. 
+# I specify the input file which corresponds to the Slurm task array, the output location and file name, and some quality control.
+# "Min-count 2" will only consider alleles with at least 2 supporting reads. "Min-coverage 4" requires that there are at least 4 
+# reads across the locus. "Max-coverage 200" ignores positions that have coverage reads over 200, as these may be faulty. 
+# "step-size 1" calculates FST SNP-by-SNP instead of using windows. "Pool-size 50:50" tells PoPoolation2 that the pool sizes 
+# include 50 and 50 chromosomes, which translates to 25 diploid individuals per pool. This is the ratio used in patches 
+# JR2, JR3, and JR4, whereas JR1 had a ratio of 50: 8 because only four white individuals were apart of the pool. 
+perl "$script" \
+  --input "$file" \
+  --output "$outdir/${basename}.fst" \
   --min-count 2 \
   --min-coverage 4 \
   --max-coverage 200 \
-  --min-covered-fraction 0.5 \
   --window-size 1 \
   --step-size 1 \
   --pool-size 50:50
