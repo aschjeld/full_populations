@@ -1,4 +1,10 @@
 #!/bin/bash
+
+# This script estimates Fisher's Exact Test between pooled pink-flowered plants and pooled white-flowered plants from Jasper Ridge Biological Preserve.
+# This test statistic measures the ratio of the two most common bases at a single position between the pink- and white-pools and determines the  
+# probability that that ratio would be observed if allele frequencies betweene patches were equal. This script was used on the pink- and white-flowered pools
+# in individual patches, and on the across site analysis that combined all pink- and all white-flowered pools. 
+
 #SBATCH --job-name=FET
 #SBATCH --partition=long
 #SBATCH --time=24:00:00
@@ -8,59 +14,70 @@
 #SBATCH --output=FET.out
 #SBATCH --error=FET.err
 
+# Activte the strcit debug mode, so the script will stop if any undefined variable is present, stop on errors, and print commands as they execute.
 set -euo pipefail
 set -x
 
+# Activate conda environment
 source /private/groups/kaylab/aschjeld/setup_conda.sh
 
-# avoid unbound-variable issues during conda activation
+# Avoid unbound-variable issues during conda activation. Since some conda scripts reference variables that may not exist, this command temporarily
+# allows unbound variables when activating this environment, then turns it back on. 
 set +u
 conda activate popoolation2
 set -u
 
+# Specify correct Perl environment to use. 
 export PATH="$HOME/perl5/bin:$PATH"
 export PERL5LIB="$HOME/perl5/lib/perl5:${PERL5LIB:-}"
 
+# Silence harmless language errors. 
 export LC_ALL=C
 export LANG=C
 
-CHUNKDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/sync_by_scaffold"
-OUTDIR="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/FET"
-SCRIPT="/private/groups/kaylab/popoolation2/populations/popoolation2_1201/fisher-test.pl"
+# Specify directories of .sync files, output file, and PoPoolation2 FET script for easier reference. 
+chunkdir="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/sync_by_scaffold"
+outdir="/private/groups/kaylab/popoolation2/populations/fullpops/JR3/FET"
+script="/private/groups/kaylab/popoolation2/populations/popoolation2_1201/fisher-test.pl"
 
-mkdir -p "$OUTDIR" logs
+# Makesute the output directory exists, otherwise the script fails. 
+mkdir -p "$outdir" 
 
-cd "$CHUNKDIR"
+# Move to the .sync file directory
+cd "$chunkdir"
 
-mapfile -t FILES < <(find . -maxdepth 1 -type f -name "scaffold*" | sort)
+# Build file list so that the .sync files are stored by scaffold name in an array callef "files".
+mapfile -t files < <(find . -maxdepth 1 -type f -name "scaffold*" | sort)
 
-if [[ "$SLURM_ARRAY_TASK_ID" -ge "${#FILES[@]}" ]]; then
-  echo "No file for SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID"
+# If there are more array task IDs than number of files, then exit the script. 
+if [[ "$slurm_array_task_id" -ge "${#files[@]}" ]]; then
+  echo "No file for slurm_array_task_id=$slurm_array_task_id"
   exit 1
 fi
 
-FILE="${FILES[$SLURM_ARRAY_TASK_ID]}"
-BASENAME="$(basename "$FILE" .sync)"
-OUTFILE="$OUTDIR/${BASE}.fet"
+# Select the file, rename it to have a suffix of .fet
+file="${files[$slurm_array_task_id]}"
+basename="$(basename "$file" .sync)"
+outfile="$outdir/${base}.fet"
 
-echo "Running on file: $FILE"
+# Print which scaffold is being processed. 
+echo "Running on file: $file"
 
+# Run FET script by specifying the script location, the input and output file, and the coverage preferences. 
 # min-count means, across the compared pools, the minor allele must be seen at least 6 times total (after filtering) for the SNP to be tested. 
 # So if a site is almost entirely one allele and the alternative allele only appears a tiny number of times, it get excluded. 
-
 # min-coverage specifies the minimum nuber of reads in a pool to be considered. This helps makes allele frequency estimates less noisy.
-
 # max-coverage specifies that a site cannot have more than 200 reads in a pool to be considered. This is used to avoid repetitive regions, mapping pileups, or paralogs. 
-
 # -suppress-noninformative tell popoolation2 to not print sites that don't contain useful information of the test. 
 # This skips sites that don't contribute meaningful information about differentiated sites. 
 
-perl "$SCRIPT" \
-  --input "$FILE" \
-  --output "$OUTFILE" \
-  --min-count 6 \
+perl "$script" \
+  --input "$file" \
+  --output "$outfile" \
+  --min-count 10 \
   --min-coverage 50 \
   --max-coverage 200 \
   --suppress-noninformative 
 
-  echo "Finished $FILE"
+# Print when each file is completed. 
+  echo "Finished $file"
