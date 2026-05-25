@@ -1,4 +1,8 @@
 #!/bin/bash
+
+# This script calculates pairwise FST of pooled pink-flowered plants against pooled white-flowered plants using the PoPoolation2 workflow. 
+# Individual patch FST and across-site FST (combining all pink and all white respectively) from Jasper Ridge Biological Preserve were estimated using this script. 
+
 #SBATCH --job-name=fst
 #SBATCH --partition=long
 #SBATCH --time=24:00:00
@@ -8,7 +12,7 @@
 #SBATCH --output=fst.out
 #SBATCH --error=fst.err
 
-# Load conda environment for the popoolation2 pipeline
+# Load conda environment for the PoPoolation2 pipeline
 source /private/groups/kaylab/aschjeld/setup_conda.sh
 conda activate popoolation2
 
@@ -59,7 +63,7 @@ echo "Running on file: $file"
 
 # Run the PoPoolation2 FST script on that .sync file and write the output to the FST directory. 
 # I specify the input file which corresponds to the Slurm task array, the output location and file name, and some quality control.
-# "Min-count 2" will only consider alleles with at least 2 supporting reads. "Min-coverage 4" requires that there are at least 4 
+# "Min-count 10" will only consider alleles with at least 10 supporting reads. "Min-coverage 50" requires that there are at least 50 
 # reads across the locus. "Max-coverage 200" ignores positions that have coverage reads over 200, as these may be faulty. 
 # "step-size 1" calculates FST SNP-by-SNP instead of using windows. "Pool-size 50:50" tells PoPoolation2 that the pool sizes 
 # include 50 and 50 chromosomes, which translates to 25 diploid individuals per pool. This is the ratio used in patches 
@@ -67,8 +71,8 @@ echo "Running on file: $file"
 perl "$script" \
   --input "$file" \
   --output "$outdir/${basename}.fst" \
-  --min-count 2 \
-  --min-coverage 4 \
+  --min-count 10 \
+  --min-coverage 50 \
   --max-coverage 200 \
   --window-size 1 \
   --step-size 1 \
