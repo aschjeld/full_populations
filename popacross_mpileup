@@ -12,53 +12,56 @@
 #SBATCH --error=logs/sync_%A_%a.err
 #SBATCH --array=1-2630%20
 
+# Activate strict debug mode to stop the script if a command fails, if an unidentified variable is used, and to print each command as it runs. 
 set -euo pipefail
 
+# Load conda environment for the PoPoolation2 pipeline
 source /private/groups/kaylab/aschjeld/setup_conda.sh
 set +u
 conda activate popoolation2
 set -u
 
-# reference FASTA and index
+# Specify the location of the reference genome and the .fai file. This file tells us the scaffold number and its length. 
 ref="/private/groups/kaylab/popoolation2/populations/scaffolded_assemblies/LPJR3B2_primary_scaffolds_final.fa"
 ref_fai="${ref}.fai"
 
+# Location of PoPoolation2 scripts for easier reference.
 popoolation2="/private/groups/kaylab/popoolation2/popoolation2_1201"
 
+# Location of BAMs and the output directory
 bamdir="/private/groups/kaylab/popoolation2/populations/fullpops/popacross/scaffold_bams"
 outdir="/private/groups/kaylab/popoolation2/populations/fullpops/popacross/sync_by_scaffold"
 
+# Make sure the output and error/output file directories exist.
 mkdir -p "$outdir" logs
 
-scaffold=$(awk -v n="$slurm_array_task_id" 'NR==n {print $1}' "$ref_fai")
+# Select scaffolds in order of the Slurm task ID, ex: task ID = 1, select scaffold 1.  
+scaffold=$(awk -v n="$SLURM_ARRAY_TASK_ID" 'NR==n {print $1}' "$ref_fai")
 
+# Print which scaffold is being worked on. 
 echo "Working on scaffold: $scaffold"
 
+# Select scaffold-specific BAMs from the previously make files called "all_pink_scaffold_X.bam"
 pink_bam="$bamdir/all_pink_${scaffold}.bam"
 white_bam="$bamdir/all_white_${scaffold}.bam"
 
+# Define file outputs
 mpileup_out="$outdir/${scaffold}.mpileup"
 sync="$outdir/${scaffold}.sync"
 
-# Skip completed scaffold
-if [[ -s "$sync" ]]; then
-    echo "Sync already exists and is non-empty, skipping:"
-    echo "$sync"
-    exit 0
-fi
-
-# Check BAMs exist
+# Check BAMs exist and if empty or missing, the script stops. 
 if [[ ! -s "$pink_bam" ]]; then
     echo "Missing pink BAM: $pink_bam"
     exit 1
 fi
 
+# Same as step above but for white bams. 
 if [[ ! -s "$white_bam" ]]; then
     echo "Missing white BAM: $white_bam"
     exit 1
 fi
 
-# Index BAMs if needed
+# Index BAMs if needed. This is if the .bai file was never made. 
 if [[ ! -f "${pink_bam}.bai" ]]; then
     echo "Indexing pink BAM"
     samtools index "$pink_bam"
@@ -68,6 +71,12 @@ if [[ ! -f "${white_bam}.bai" ]]; then
     echo "Indexing white BAM"
     samtools index "$white_bam"
 fi
+
+# Using PoPoolation2 file, create the mpileup file. -B dsables BAQ adjustment, which would usualy reduce mismatches near indels. PoPoolation2 disables this 
+# because it can bias allele counts. -Q 0 includes all bases regardless of base quality for now. In a later filtering step, it is tighter. 
+# -f "$ref" makes sure the files are being aligned against the reference genome. -r "$scaffold" restricts each mpileup file to one scaffold only. 
+# Then specify the BAM inputs for each scaffold, and those are written to the mpileup text file. This will contain scaffold, position, reference base, coverage, observed 
+# bases, and base qualities. 
 
 echo "Creating mpileup"
 
@@ -81,6 +90,10 @@ samtools mpileup \
 
 echo "Converting mpileup to sync"
 
+# Then the mpileup is converted to a sync file. -Xmx20g allows Java to use 20 GB of RAM. The FASTQ type specification is only significant in that it tells PoPoolation2 how the sequencing quality scores are encoded in the file. We used the Ultima
+# Genomics sequencing platform but since they use the same quality score metric as Sanger, this is fine. Min-qual 20 filters bases below quality of 20. This is the main sequence-quality filter, as a Q20 accepts 
+# a 1% sequencing error. Uses 8 threads to match CPU request. Each row of this file includes the counts of A:T:C:G:N:del for both pools. Downstream analyses like FST and FET pull from that information directly. 
+
 java -ea -Xmx20g -jar "$popoolation2/mpileup2sync.jar" \
     --input "$mpileup_out" \
     --output "${sync}.tmp" \
@@ -88,6 +101,7 @@ java -ea -Xmx20g -jar "$popoolation2/mpileup2sync.jar" \
     --min-qual 20 \
     --threads 8
 
+# Renames the completed temp file into the final sync to prevent partial outputs if the job crashes mid-run. 
 mv "${sync}.tmp" "$sync"
 
 echo "Done:"
